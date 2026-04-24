@@ -1,9 +1,39 @@
 import os
+import time
+import logging
 import tempfile
 import torch
 import ants
+import requests
 from HD_BET.hd_bet_prediction import get_hdbet_predictor, hdbet_predict
 from HD_BET.checkpoint_download import maybe_download_parameters
+
+logger = logging.getLogger(__name__)
+
+
+def _download_hd_bet_with_retry(max_retries: int = 5, base_delay: float = 10.0) -> None:
+    """Download HD-BET model weights with exponential backoff retry."""
+    for attempt in range(max_retries):
+        try:
+            maybe_download_parameters()
+            return
+        except (
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ReadTimeout,
+            OSError,
+        ) as exc:
+            if attempt < max_retries - 1:
+                wait = base_delay * (2 ** attempt)
+                logger.warning(
+                    "HD-BET model download failed (attempt %d/%d): %s. "
+                    "Retrying in %.0fs...",
+                    attempt + 1, max_retries, exc, wait,
+                )
+                time.sleep(wait)
+            else:
+                logger.error("HD-BET model download failed after %d attempts.", max_retries)
+                raise
 
 
 class BrainExtractor:
@@ -29,8 +59,8 @@ class BrainExtractor:
         self.keep_mask = keep_mask
         self.verbose = verbose
         
-        # Download model parameters if not already present
-        maybe_download_parameters()
+        # Download model parameters if not already present (with retry)
+        _download_hd_bet_with_retry()
         
         # Initialize predictor
         # use_tta=True improves quality but is 8x slower
